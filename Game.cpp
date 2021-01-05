@@ -1,21 +1,10 @@
 #include "Game.hpp"
 #include "utils.hpp"
-
+#include "Thread.hpp"
 static const char *colors[7] = {BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN};
 /*--------------------------------------------------------------------------------
 								
 --------------------------------------------------------------------------------*/
-Game::Game(game_params): m_gen_num(game_params){
-
-
-    m_gen_num = game_params ;
-    m_thread_num;
-
-    interactive_on=;
-    print_on=;
-    filename = ;
-
-}
 
 void Game::run() {
 
@@ -35,10 +24,16 @@ void Game::run() {
 void Game::_init_game() {
 	// Create game fields - Consider using utils:read_file, utils::split
     vector<string> lines = utils::read_lines(file_name);
-	int field_height = lines.size() ;
-	int field_width =  lines.front().size();
+	field_height = lines.size() ;
+	field_width =  lines.front().size();
 
 	// Create & Start threads
+	m_thread_num = thread_num();
+	for (int i=0 ; i<m_thread_num ; i++){
+	    Working_Thread thread(i);
+	    thread.start();
+	    m_threadpool.push_back(&thread);
+	}
 	// Testing of your implementation will presume all threads are started here
 }
 

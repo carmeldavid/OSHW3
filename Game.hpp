@@ -3,7 +3,7 @@
 
 #include "../Part1/Headers.hpp"
 #include "Thread.hpp"
-
+#include <cmath>
 /*--------------------------------------------------------------------------------
 								  Species colors
 --------------------------------------------------------------------------------*/
@@ -41,8 +41,11 @@ public:
 	void run(); // Runs the game
 	const vector<double> gen_hist() const; // Returns the generation timing histogram  
 	const vector<double> tile_hist() const; // Returns the tile timing histogram
-	uint thread_num() const; //Returns the effective number of running threads = min(thread_num, field_height)
-
+	uint thread_num() const{//Returns the effective number of running threads = min(thread_num, field_height)
+	    return fmin(m_thread_num,field_height);
+	}
+    void phase1();
+    void phase2();
 
 protected: // All members here are protected, instead of private for testing purposes
 
@@ -62,6 +65,8 @@ protected: // All members here are protected, instead of private for testing pur
 	bool interactive_on; // Controls interactive mode - that means, prints the board as an animation instead of a simple dump to STDOUT 
 	bool print_on; // Allows the printing of the board. Turn this off when you are checking performance (Dry 3, last question)
 	string file_name;
+	int field_height;
+	int field_width;
 	// TODO: Add in your variables and synchronization primitives  
 
 };

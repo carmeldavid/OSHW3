@@ -7,7 +7,7 @@ class Thread
 public:
 	Thread(uint thread_id) 
 	{
-		// Only places thread_id 
+		m_thread_id = thread_id;// Only places thread_id
 	} 
 	virtual ~Thread() {} // Does nothing 
 
@@ -15,6 +15,10 @@ public:
 	// Creates the internal thread via pthread_create 
 	bool start()
 	{
+	    if (pthread_create(&m_thread,nullptr,entry_func,(void*)this) != 0){
+	        return false;
+	    }
+	    return true;
 	}
 
 	/** Will not return until the internal thread has exited. */
@@ -37,4 +41,16 @@ private:
 	pthread_t m_thread;
 };
 
+class Working_Thread : public Thread {
+protected:
+    void thread_workload() override {
+        if(phase1){
+        }
+        else{ //phase2
+        }
+    }
+public:
+    Working_Thread(uint thread_id): Thread(thread_id){}
+    ~Working_Thread();
+};
 #endif

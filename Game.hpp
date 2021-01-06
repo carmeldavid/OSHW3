@@ -1,8 +1,9 @@
 #ifndef __GAMERUN_H
 #define __GAMERUN_H
-
-#include "../Part1/Headers.hpp"
+#define BLANK 0
+#include "Headers.hpp"
 #include "Thread.hpp"
+#include "PCQueue.hpp"
 #include <cmath>
 /*--------------------------------------------------------------------------------
 								  Species colors
@@ -36,7 +37,8 @@ public:
 
 	Game(game_params params):m_gen_num (params.n_gen),m_thread_num(params.n_thread),
 	                        file_name(params.filename),interactive_on(params.interactive_on),
-	                        print_on(params.print_on){}
+	                        print_on(params.print_on){
+	}
 	~Game() = default;
 	void run(); // Runs the game
 	const vector<double> gen_hist() const; // Returns the generation timing histogram  
@@ -44,8 +46,6 @@ public:
 	uint thread_num() const{//Returns the effective number of running threads = min(thread_num, field_height)
 	    return fmin(m_thread_num,field_height);
 	}
-    void phase1();
-    void phase2();
 
 protected: // All members here are protected, instead of private for testing purposes
 
@@ -67,6 +67,22 @@ protected: // All members here are protected, instead of private for testing pur
 	string file_name;
 	int field_height;
 	int field_width;
+    vector<vector<unsigned int>> curr;
+    vector<vector<unsigned int>> next;
+    PCQueue<> tasks_queue;
+
+
+	void phase1(int start, int end){
+	    //allocate new tile for updated cells
+
+	    //for each spot in tile, check if alive and check num
+	    for (int i=start; i<end;i++){
+	        for (int j=0; j<field_width; j++){
+	            bool alive;
+	            alive =
+	        }
+	    }
+	}
 	// TODO: Add in your variables and synchronization primitives  
 
 };

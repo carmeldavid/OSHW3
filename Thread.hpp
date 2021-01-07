@@ -1,7 +1,9 @@
 #ifndef __THREAD_H
 #define __THREAD_H
 
-#include "../Part1/Headers.hpp"
+#include "Headers.hpp"
+#include "Game.hpp"
+
 class Thread
 {
 public:
@@ -15,11 +17,8 @@ public:
 	// Creates the internal thread via pthread_create 
 	bool start()
 	{
-	    if (pthread_create(&m_thread,nullptr,entry_func,(void*)this) != 0){
-	        return false;
-	    }
-	    return true;
-	}
+        return pthread_create(&m_thread, nullptr, entry_func, (void *) this) == 0;
+    }
 
 	/** Will not return until the internal thread has exited. */
 	void join()
@@ -41,16 +40,4 @@ private:
 	pthread_t m_thread;
 };
 
-class Working_Thread : public Thread {
-protected:
-    void thread_workload() override {
-        if(phase1){
-        }
-        else{ //phase2
-        }
-    }
-public:
-    Working_Thread(uint thread_id): Thread(thread_id){}
-    ~Working_Thread();
-};
 #endif

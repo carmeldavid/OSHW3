@@ -28,10 +28,13 @@ void Game::_init_game() {
     vector<string> all_lines = utils::read_lines(file_name);
 	field_height = all_lines.size() ;
 	field_width =  all_lines.front().size();
+    pthread_mutex_init(&tasks_lock, nullptr);
+    pthread_cond_init(&phase_done, nullptr);
+	pthread_mutex_init(&lock, nullptr);
 
-	vector<unsigned int> zero_vec(field_width,BLANK);
-    curr = vector<vector<unsigned int>> (field_height,zero_vec);
-    next = vector<vector<unsigned int>> (field_height,zero_vec);
+	vector<unsigned int> zero_vec(field_width,0);
+    curr = new vector<vector<unsigned int>> (field_height,zero_vec);
+    next = new vector<vector<unsigned int>> (field_height,zero_vec);
 
     vector<string> cur_line;
     vector<unsigned int> cur_line_vals;
@@ -40,15 +43,16 @@ void Game::_init_game() {
     for (int i=0 ;i<field_height;i++){
         cur_line = utils::split(all_lines[i],' ');
         for(int j=0;j<field_width;j++){
-            cur_line_vals.push_back(cur_line[j]);
+            cur_line_vals.push_back(std::stoi(cur_line[j]));
         }
-        curr.push_back(cur_line_vals);
+        curr->push_back(cur_line_vals);
     }
 
 	// Create & Start threads
 	m_thread_num = thread_num();
-	for (int i=0 ; i<m_thread_num ; i++){
-	    Working_Thread thread(i);
+    tasksLeft = 2*m_thread_num*m_gen_num;
+    for (int i=0 ; i<m_thread_num ; i++){
+	    Working_Thread thread(i,this);
 	    thread.start();
 	    m_threadpool.push_back(&thread);
 	}
@@ -56,19 +60,71 @@ void Game::_init_game() {
 }
 
 void Game::_step(uint curr_gen) {
-	// Push jobs to queue
-	// Wait for the workers to finish calculating 
-	// Swap pointers between current and next field 
-	// NOTE: Threads must not be started here - doing so will lead to a heavy penalty in your grade 
+    int tile_size = field_height/m_thread_num;
+    jobs_completed = 0;
+//    int last_tile_size = tile_size + field_height%m_thread_num;
+//phase 1 jobs
+    // Push jobs to queue
+
+
+    for ( int i=0 ; i < m_thread_num ; i ++ ){
+        if (i == m_thread_num - 1){
+            TileJob* job = new TileJob(this,i*tile_size,field_height-1);
+            jobs_queue.push(job);
+        }
+        else{
+            TileJob* job = new TileJob(this,i*tile_size,(i+1)*tile_size-1);
+            jobs_queue.push(job);
+        }
+
+    }
+	// Wait for the workers to finish calculating
+	pthread_mutex_lock(&lock);
+    while (jobs_completed < m_thread_num){ //phase not completed
+        pthread_cond_wait(&phase_done,&lock);
+    }
+    phase = 2;
+    jobs_completed = 0;
+    pthread_mutex_unlock(&lock);
+	// Swap pointers between current and next field
+	swap_fields();
+	// NOTE: Threads must not be started here - doing so will lead to a heavy penalty in your grade
+
+
+	//phase 2 jobs
+    for ( int i=0 ; i < m_thread_num ; i ++ ){
+        if (i == m_thread_num - 1){
+            TileJob* job = new TileJob(this,i*tile_size,field_height-1);
+            jobs_queue.push(job);
+        }
+        else{
+            TileJob* job = new TileJob(this,i*tile_size,(i+1)*tile_size-1);
+            jobs_queue.push(job);
+        }
+    }
+    // Wait for the workers to finish calculating
+    pthread_mutex_lock(&lock);
+    while (jobs_completed < m_thread_num){ //phase not completed
+        pthread_cond_wait(&phase_done,&lock);
+    }
+    phase = 1;
+    jobs_completed = 0;
+    pthread_mutex_unlock(&lock);
+    // Swap pointers between current and next field
+    swap_fields();
+    // NOTE: Threads must not be started here - doing so will lead to a heavy penalty in your grade
 }
 
 void Game::_destroy_game(){
 	// Destroys board and frees all threads and resources 
 	// Not implemented in the Game's destructor for testing purposes. 
 	// All threads must be joined here
+
 	for (uint i = 0; i < m_thread_num; ++i) {
         m_threadpool[i]->join();
     }
+	delete curr;
+	delete next;
 }
 
 /*--------------------------------------------------------------------------------
@@ -85,8 +141,21 @@ inline void Game::print_board(const char* header) {
 		// Print small header if needed
 		if (header != nullptr)
 			cout << "<------------" << header << "------------>" << endl;
-		
-		// TODO: Print the board 
+
+		// TODO: Print the board
+
+        cout << u8"╔" << string(u8"═") * field_width << u8"╗" << endl;
+        for (uint i = 0; i < field_height; ++i) {
+            cout << u8"║";
+            for (uint j = 0; j < field_width; ++j) {
+                if ((*curr)[i][j] > 0)
+                    cout << colors[(*curr)[i][j] % 7] << u8"█" << RESET;
+                else
+                    cout << u8"░";
+            }
+            cout << u8"║" << endl;
+        }
+        cout << u8"╚" << string(u8"═") * field_width << u8"╝" << endl;
 
 		// Display for GEN_SLEEP_USEC micro-seconds on screen 
 		if(interactive_on)
@@ -95,23 +164,11 @@ inline void Game::print_board(const char* header) {
 
 }
 
-
-/* Function sketch to use for printing the board. You will need to decide its placement and how exactly 
-	to bring in the field's parameters. 
-
-		cout << u8"╔" << string(u8"═") * field_width << u8"╗" << endl;
-		for (uint i = 0; i < field_height ++i) {
-			cout << u8"║";
-			for (uint j = 0; j < field_width; ++j) {
-                if (field[i][j] > 0)
-                    cout << colors[field[i][j] % 7] << u8"█" << RESET;
-                else
-                    cout << u8"░";
-			}
-			cout << u8"║" << endl;
-		}
-		cout << u8"╚" << string(u8"═") * field_width << u8"╝" << endl;
-*/ 
-
+const vector<double> Game::gen_hist() const {
+    return m_gen_hist;
+}
+const vector<double> Game::tile_hist() const {
+    return m_tile_hist;
+}
 
 

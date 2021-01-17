@@ -116,7 +116,7 @@ size_t _num_meta_data_bytes(){
     return _size_meta_data()*num_total_blocks;
 }
 void _split_reused_blocks(void* block,size_t occ_size){
-    m_metadata * md_block = (m_metadata*)block;
+    m_metadata* md_block = (m_metadata*)block;
     md_block--; //reached metadata of block
     size_t full_Size = md_block->size;
     if (full_Size-occ_size < 128 + _size_meta_data()){
@@ -138,7 +138,7 @@ void _split_reused_blocks(void* block,size_t occ_size){
 
 }
 void *_mmap_allocation(size_t size) {
-    void * space = mmap(nullptr, size + _size_meta_data(),PROT_READ | PROT_WRITE, MAP_ANONYMOUS , -1, 0);
+    void * space = mmap(nullptr, size + _size_meta_data(),PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS , -1, 0);
     if (space == (void*)-1){
         return nullptr;
     }
@@ -186,20 +186,39 @@ void* scalloc(size_t num, size_t size){
 }
 bool combine(m_metadata* first, m_metadata* second){
     if (first->is_free && second->is_free){
-        first->size += _size_meta_data()+second->size;
-        first->next = second->next;
+
         num_free_bytes+= _size_meta_data();
+        num_total_bytes+= _size_meta_data();
         num_total_blocks--;
         num_free_blocks--;
-        num_total_bytes+= _size_meta_data();
+        first->size += _size_meta_data()+second->size;
+        first->next = second->next;
+        m_metadata *_next = second->next;
+        m_metadata *_prev = second->prev;
+        _prev->next = _next;
+        if (_next != nullptr)
+            _next->prev = _prev;
         return true;
     }
     return false;
+}
+
+void _remove_from_mmap_list(m_metadata* metadata){
+    metadata->prev->next = metadata->next;
+    if(metadata->next)
+        metadata->next->prev = metadata->prev;
+    else
+        mmap_list_end = metadata->prev;
+
+    num_total_bytes -= metadata->size;
+    num_total_blocks--;
+    munmap(metadata,metadata->size+_size_meta_data());
 }
 void sfree(void* p){
     if(!p){
         return;
     }
+    m_metadata* listhead = md_list_head.next;
     m_metadata* metadata = (m_metadata*) p;
     metadata--; //reach the start point of the metadata of the block
     if (metadata->is_free){
@@ -208,72 +227,131 @@ void sfree(void* p){
     size_t block_size = metadata->size;
     metadata->is_free = true;
 
-    if (metadata->size > 128*1024){
-        munmap(metadata,metadata->size+_size_meta_data());
+    if (metadata->size >= 128*1024){
+
+        _remove_from_mmap_list(metadata);
+        return;
     }
 
     bool combined = combine(metadata->prev,metadata);
-    if (combined)
+    if (combined) {
         metadata = metadata->prev;
-
-    if (metadata->next){
-        if (!metadata->next->next)
+        if (!metadata->next)
             md_list_end = metadata;
-        combine(metadata,metadata->next);
-
+    }
+    if (metadata->next){
+        combined = combine(metadata,metadata->next);
+        if (combined && !metadata->next)
+            md_list_end = metadata;
     }
     num_free_blocks++;
     num_free_bytes += block_size;
 }
 
-void* srealloc(void* oldp, size_t size){
+void *srealloc(void *oldp, size_t size) {
     if (size == 0 || size > 1e8)
         return nullptr;
-    void* block = nullptr;
-    if (!oldp){
-        block = smalloc(size);
-    }
-    else{
-        bool malloced = false;
-        m_metadata* metadata = (m_metadata*) oldp;
-        metadata--; //reach the start point of the metadata of the block
-        if (metadata->size >= size){
+    m_metadata *metadata = (m_metadata *) oldp;
+    metadata--; //reach the start point of the metadata of the block
+
+    if (size >= 128 * 1024) { //mmap realloc
+        if (!oldp) {
+            void *allocated_mmap = _mmap_allocation(size);
+            return allocated_mmap;
+        }
+        size_t size_diff = metadata->size - size;
+        metadata->size = size;
+        if (metadata->size >= size) {
+            munmap(metadata + _size_meta_data() + size, size_diff);
+            num_total_bytes -= size_diff;
             return oldp;
         }
-        if (metadata->prev->size + metadata->size +_size_meta_data() >= size){
-            combine(metadata->prev,metadata);
+        //allocate new
+        void *new_mmap = _mmap_allocation(size);
+        //copy
+        memcpy(new_mmap, oldp, metadata->size);
+        //erase old
+        _remove_from_mmap_list(metadata);
+
+        return new_mmap;
+    } else { //regular realloc
+        if (!oldp) {
+            return smalloc(size);
         }
-        else if(metadata->next && (metadata->next->size + metadata->size +_size_meta_data() >= size)){
-            combine(metadata,metadata->next);
-        }
-        else if (metadata->next && (metadata->next->size + metadata->prev->size + metadata->size +2*_size_meta_data() >= size)){
-            combine(metadata->prev,metadata);
-            combine(metadata,metadata->next);
-        }
-        else{
-            if ((m_metadata*)oldp == md_list_end){
-                block = _enlarge_wilderness(size-((m_metadata*)oldp)->size);
+        //check if size is enough
+        // if yes - split if needed (and combine?)
+        // if no
+        // check if enoguh size + available with prev neighbour -> next neighbor -> both neighbors  - if yes, use and split
+        // find if there's a different block and use it (split?) or allocate - malloc func does this
+        if (metadata->size >= size) {
+            size_t size_diff = metadata->size - size;
+            if (size_diff >= 128 + _size_meta_data()) { //split
+                _split_reused_blocks(oldp, size);
             }
-            if(!block){
-                block = smalloc(size);
-                malloced = true;
-                if(!block){
-                    return nullptr;
-                }
+            return oldp;
+        }
+// #TODO check if needed, currently for test
+        if (!metadata->next) {
+            if (_enlarge_wilderness(size)) {
+                return oldp;
             }
         }
-        memcpy(block,oldp,metadata->size);
-        if (malloced){
+        bool combined = false;
+        metadata->is_free = true;
+        if (metadata->prev->size && metadata->prev->is_free && metadata->prev->size + metadata->size + _size_meta_data() >= size) { //comb with prev
+            size_t e1 = metadata->prev->size + metadata->size + _size_meta_data();
+            size_t e2 = metadata->next->size + metadata->size + _size_meta_data();
+            bool test = metadata->next && metadata->next->size + metadata->size + _size_meta_data() >= size;
+            combined = combine(metadata->prev, metadata);
+            if (combined) {
+                if (!metadata->next)
+                    md_list_end = metadata->prev;
+                memcpy(metadata->prev + _size_meta_data(), metadata + _size_meta_data(), metadata->size);
+                metadata = metadata->prev;
+                metadata->is_free = false;
+                m_metadata *to_split = metadata;
+                to_split++;
+                _split_reused_blocks((void *) to_split, size);
+            }
+        } else if (metadata->next && metadata->next->is_free && metadata->next->size + metadata->size + _size_meta_data() >= size) { //comb with next
+            combined = combine(metadata, metadata->next);
+            if (combined) {
+                metadata->is_free = false;
+                if (!metadata->next)
+                    md_list_end = metadata;
+                m_metadata *to_split = metadata;
+                to_split++;
+                _split_reused_blocks((void *) to_split, size);
+            }
+        } else if (metadata->prev->size && metadata->next &&
+                   metadata->prev->size + metadata->size + metadata->next->size + 2 * _size_meta_data() >= size) { // comb both
+            if ((metadata->prev->is_free) && (metadata->next->is_free)) {
+                combined = combine(metadata->prev, metadata);
+                memcpy(metadata->prev + _size_meta_data(), metadata + _size_meta_data(), metadata->size);
+                metadata = metadata->prev;
+                combine(metadata, metadata->next);
+                if (!metadata->next)
+                    md_list_end = metadata;
+                num_free_bytes -= _size_meta_data();
+                metadata->is_free = false;
+                m_metadata *to_split = metadata;
+                to_split++;
+                _split_reused_blocks((void *) to_split, size);
+            }
+        }
+        if (combined) {
+            num_free_bytes -= _size_meta_data();
+            return ++metadata;
+        } else {
+            metadata->is_free = false;
+            void *new_block = smalloc(size);
+            if (!new_block)
+                return nullptr;
+            memcpy(new_block, oldp, metadata->size);
+
             sfree(oldp);
+            return new_block;
+
         }
     }
-    return block;
 }
-
-
-
-
-
-
-
-

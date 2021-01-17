@@ -28,6 +28,7 @@ void _insert_to_list_end(m_metadata* md){
     else{
         md_list_end->next = md;
         md->prev = tmp;
+        md_list_end = md;
     }
 }
 void* _find_free_block(size_t size){
@@ -40,6 +41,7 @@ void* _find_free_block(size_t size){
             cur_md->is_free = false;
             num_free_blocks--;
             num_free_bytes-=cur_md->size;
+            cur_md++;
             return (void*) cur_md;
         }
         cur_md = cur_md->next;

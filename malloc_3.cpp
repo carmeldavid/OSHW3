@@ -33,6 +33,8 @@ void _insert_to_list_end(m_metadata* md, bool is_mmap){
         else{
             md_list_end->next = md;
             md->prev = tmp;
+            md_list_end = md;
+
         }
     }
     else{
@@ -51,6 +53,7 @@ void _insert_to_list_end(m_metadata* md, bool is_mmap){
 }
 
 void* _enlarge_wilderness(size_t size){
+    m_metadata* end = md_list_end;
     size_t size_to_expand = size-md_list_end->size;
     void* expansion = sbrk(size_to_expand);
     if (expansion == (void*)-1){
@@ -75,12 +78,16 @@ void* _find_free_block(size_t size){
         }
         cur_md = cur_md->next;
     }
+    m_metadata * end = md_list_end;
     if (md_list_end->is_free){
+        size_t block_size = md_list_end->size;
         if(!_enlarge_wilderness(size)){
             return nullptr;
         }
         num_free_blocks--;
-        num_free_bytes-=md_list_end->size;
+        num_free_bytes-=block_size;
+        end->is_free = false;
+        return (void*)++end;
     }
     return nullptr;
 }
@@ -111,22 +118,27 @@ size_t _num_meta_data_bytes(){
 void _split_reused_blocks(void* block,size_t occ_size){
     m_metadata * md_block = (m_metadata*)block;
     md_block--; //reached metadata of block
-    size_t full_Size = _size_meta_data()+md_block->size;
-    if (full_Size-occ_size-_size_meta_data() < 128){
+    size_t full_Size = md_block->size;
+    if (full_Size-occ_size < 128 + _size_meta_data()){
         return;
     }
     m_metadata* new_metadata = (m_metadata*) ((char*) block + occ_size);
-    new_metadata->size = full_Size-occ_size-2*_size_meta_data();
+    new_metadata->size = full_Size-occ_size-_size_meta_data();
     new_metadata->is_free = true;
     new_metadata->next = md_block->next;
     new_metadata->prev = md_block;
+    if (!md_block->next)
+        md_list_end = new_metadata;
     md_block->next = new_metadata;
-
-    num_free_bytes+=full_Size-occ_size-2*_size_meta_data();
+    md_block->size = occ_size;
+    num_free_bytes+=full_Size-occ_size-_size_meta_data();
+    num_total_blocks++;
     num_free_blocks++;
+    num_total_bytes-=_size_meta_data();
+
 }
 void *_mmap_allocation(size_t size) {
-    void *space = mmap(nullptr, size + _size_meta_data(), PROT_READ | PROT_WRITE, MAP_ANONYMOUS, -1, 0);
+    void * space = mmap(nullptr, size + _size_meta_data(),PROT_READ | PROT_WRITE, MAP_ANONYMOUS , -1, 0);
     if (space == (void*)-1){
         return nullptr;
     }
@@ -143,7 +155,7 @@ void *_mmap_allocation(size_t size) {
 void* smalloc(size_t size){
     if (size == 0 || size > 1e8)
         return nullptr;
-    if (size > 128000){
+    if (size > 128*1024){
         return _mmap_allocation(size);
     }
     void* found_block = _find_free_block(size);
@@ -172,14 +184,17 @@ void* scalloc(size_t num, size_t size){
         return nullptr;
     return memset(block,0,num*size);
 }
-void combine(m_metadata* first, m_metadata* second){
+bool combine(m_metadata* first, m_metadata* second){
     if (first->is_free && second->is_free){
         first->size += _size_meta_data()+second->size;
         first->next = second->next;
         num_free_bytes+= _size_meta_data();
         num_total_blocks--;
         num_free_blocks--;
+        num_total_bytes+= _size_meta_data();
+        return true;
     }
+    return false;
 }
 void sfree(void* p){
     if(!p){
@@ -190,19 +205,25 @@ void sfree(void* p){
     if (metadata->is_free){
         return;
     }
-
+    size_t block_size = metadata->size;
     metadata->is_free = true;
 
-    if (metadata->size > 128000){
+    if (metadata->size > 128*1024){
         munmap(metadata,metadata->size+_size_meta_data());
     }
-    combine(metadata->prev,metadata);
+
+    bool combined = combine(metadata->prev,metadata);
+    if (combined)
+        metadata = metadata->prev;
+
     if (metadata->next){
+        if (!metadata->next->next)
+            md_list_end = metadata;
         combine(metadata,metadata->next);
+
     }
     num_free_blocks++;
-    num_free_bytes += metadata->size;
-
+    num_free_bytes += block_size;
 }
 
 void* srealloc(void* oldp, size_t size){

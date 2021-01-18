@@ -79,7 +79,7 @@ void* _find_free_block(size_t size){
         cur_md = cur_md->next;
     }
     m_metadata * end = md_list_end;
-    if (md_list_end->is_free){
+    if (md_list_end->is_free    ){
         size_t block_size = md_list_end->size;
         if(!_enlarge_wilderness(size)){
             return nullptr;
@@ -192,7 +192,7 @@ bool combine(m_metadata* first, m_metadata* second){
         num_total_blocks--;
         num_free_blocks--;
         first->size += _size_meta_data()+second->size;
-        first->next = second->next;
+ //       first->next = second->next;
         m_metadata *_next = second->next;
         m_metadata *_prev = second->prev;
         _prev->next = _next;
@@ -260,8 +260,8 @@ void *srealloc(void *oldp, size_t size) {
             return allocated_mmap;
         }
         size_t size_diff = metadata->size - size;
-        metadata->size = size;
         if (metadata->size >= size) {
+            metadata->size = size;
             munmap(metadata + _size_meta_data() + size, size_diff);
             num_total_bytes -= size_diff;
             return oldp;
@@ -290,24 +290,20 @@ void *srealloc(void *oldp, size_t size) {
             }
             return oldp;
         }
-// #TODO check if needed, currently for test
-        if (!metadata->next) {
-            if (_enlarge_wilderness(size)) {
-                return oldp;
-            }
-        }
         bool combined = false;
         metadata->is_free = true;
         if (metadata->prev->size && metadata->prev->is_free && metadata->prev->size + metadata->size + _size_meta_data() >= size) { //comb with prev
-            size_t e1 = metadata->prev->size + metadata->size + _size_meta_data();
-            size_t e2 = metadata->next->size + metadata->size + _size_meta_data();
-            bool test = metadata->next && metadata->next->size + metadata->size + _size_meta_data() >= size;
             combined = combine(metadata->prev, metadata);
             if (combined) {
                 if (!metadata->next)
                     md_list_end = metadata->prev;
-                memcpy(metadata->prev + _size_meta_data(), metadata + _size_meta_data(), metadata->size);
-                metadata = metadata->prev;
+                m_metadata *dest = metadata->prev;
+                dest++;
+                m_metadata *src = metadata;
+                src++;
+                m_metadata * pre_copy_prev = metadata->prev;
+                memcpy(dest,src, metadata->size);
+                metadata = pre_copy_prev;
                 metadata->is_free = false;
                 m_metadata *to_split = metadata;
                 to_split++;
@@ -327,8 +323,14 @@ void *srealloc(void *oldp, size_t size) {
                    metadata->prev->size + metadata->size + metadata->next->size + 2 * _size_meta_data() >= size) { // comb both
             if ((metadata->prev->is_free) && (metadata->next->is_free)) {
                 combined = combine(metadata->prev, metadata);
-                memcpy(metadata->prev + _size_meta_data(), metadata + _size_meta_data(), metadata->size);
-                metadata = metadata->prev;
+                m_metadata *dest = metadata->prev;
+                dest++;
+                m_metadata *src = metadata;
+                src++;
+                m_metadata * pre_copy_prev = metadata->prev;
+                memcpy(dest,src, metadata->size);
+                metadata = pre_copy_prev;
+
                 combine(metadata, metadata->next);
                 if (!metadata->next)
                     md_list_end = metadata;
@@ -344,6 +346,11 @@ void *srealloc(void *oldp, size_t size) {
             return ++metadata;
         } else {
             metadata->is_free = false;
+            if (!metadata->next) {
+                if (_enlarge_wilderness(size)) {
+                    return oldp;
+                }
+            }
             void *new_block = smalloc(size);
             if (!new_block)
                 return nullptr;
